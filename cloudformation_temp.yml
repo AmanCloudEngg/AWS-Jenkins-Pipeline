@@ -1,0 +1,156 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation Template for Jenkins, CodeDeploy, CodeBuild, and S3 Integration
+
+Resources:
+
+  # S3 Bucket for GitHub repository and CodeBuild artifacts
+  ArtifactsS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-artifacts"
+      VersioningConfiguration:
+        Status: Enabled
+
+  # IAM Role for Jenkins
+  JenkinsRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: JenkinsRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: JenkinsS3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub "${ArtifactsS3Bucket.Arn}/*"
+
+  # Instance Profile for Jenkins Role
+  JenkinsInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref JenkinsRole
+
+  # IAM Role for CodeDeploy
+  CodeDeployRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: CodeDeployRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeDeployS3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "${ArtifactsS3Bucket.Arn}/*"
+
+  # IAM Role for CodeBuild
+  CodeBuildRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: CodeBuildRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildS3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "${ArtifactsS3Bucket.Arn}/*"
+
+  # Security Group for Jenkins
+  JenkinsSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Security Group for Jenkins
+      VpcId: vpc-032424745ae72f1c5  # Replace with your VPC ID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080  # Jenkins default port
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+
+  # Jenkins EC2 Instance
+  JenkinsInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t2.micro  # Choose instance type
+      ImageId: ami-0a4408457f9a03be3  # Replace with your AMI ID
+      IamInstanceProfile: !Ref JenkinsInstanceProfile
+      SecurityGroupIds:
+        - !Ref JenkinsSecurityGroup
+      KeyName: terraform  # Replace with your key pair name
+
+  # CodeDeploy Application
+  CodeDeployApplication:
+    Type: 'AWS::CodeDeploy::Application'
+    Properties:
+      ApplicationName: MyCodeDeployApp
+      ComputePlatform: Server
+
+  # CodeDeploy Deployment Group
+  CodeDeployDeploymentGroup:
+    Type: 'AWS::CodeDeploy::DeploymentGroup'
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: MyDeploymentGroup
+      ServiceRoleArn: !GetAtt CodeDeployRole.Arn
+      Ec2TagFilters:
+        - Key: Name
+          Value: MyApplicationInstance
+          Type: KEY_AND_VALUE
+
+  # Auto Scaling Group
+  AutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      MinSize: '1'
+      MaxSize: '3'
+      DesiredCapacity: '1'
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      VPCZoneIdentifier:
+        - subnet-0341a3011d79c03be  # Replace with your subnet ID
+
+  # Launch Configuration for Auto Scaling
+  LaunchConfiguration:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      InstanceType: t2.micro  # Choose instance type
+      ImageId: ami-0a4408457f9a03be3  # Replace with your AMI ID
+      IamInstanceProfile: !Ref CodeDeployRole
+      SecurityGroups:
+        - !Ref JenkinsSecurityGroup
+
+Outputs:
+  S3BucketName:
+    Description: "Name of the S3 bucket for artifacts"
+    Value: !Ref ArtifactsS3Bucket
